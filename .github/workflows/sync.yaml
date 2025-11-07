@@ -1,0 +1,41 @@
+name: GitHub Actions Local DB Sync
+env:
+  R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+  R2_BUCKET: ${{ secrets.R2_BUCKET }}
+  R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  ORDERBOOK_CLI_BINARY_URL: ${{ secrets.ORDERBOOK_CLI_BINARY_URL }}
+  SETTINGS_YAML_URL: ${{ secrets.SETTINGS_YAML_URL }}
+  HYPER_RPC_API_TOKEN: ${{ secrets.HYPER_RPC_API_TOKEN }}
+  RELEASE_BASE_URL: ${{ secrets.RELEASE_BASE_URL }}
+on:
+  workflow_dispatch:
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          # restore and save a cache using this key
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          # if there's no cache hit, restore a cache by this prefix
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          # collect garbage until the Nix store size (in bytes) is at most this number
+          # before trying to save a new cache
+          # 1G = 1073741824
+          gc-max-store-size-linux: 1G
+
+      - run: nix develop -c ./scripts/download-binary.sh
+      - run: nix develop -c ./scripts/sync.sh
+      - run: nix develop -c ./scripts/r2-upload.sh
