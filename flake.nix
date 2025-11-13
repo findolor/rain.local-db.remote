@@ -54,7 +54,7 @@
               steps=(
                 "download-binary.sh"
                 "sync.sh"
-                "r2-upload.sh"
+                "do-spaces-upload.sh"
                 "cleanup.sh"
               )
 
