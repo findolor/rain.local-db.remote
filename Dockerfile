@@ -29,7 +29,7 @@ WORKDIR /app/rain.orderbook
 RUN git checkout "$REMOTE_REPO_COMMIT"
 RUN cp .env.example .env
 RUN git submodule update --init --recursive
-RUN bash ./prep-base.sh
+RUN ["bash", "-lc", "set -euo pipefail; exec ./prep-base.sh"]
 RUN nix develop -c .#rainix-ob-cli-artifact
 RUN tar -xzf crates/cli/bin/rain-orderbook-cli.tar.gz -C /app
 RUN mv /app/rain-orderbook-cli /app/rain_orderbook_cli
