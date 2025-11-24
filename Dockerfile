@@ -32,9 +32,8 @@ RUN git submodule update --init --recursive
 RUN bash ./prep-base.sh
 RUN nix develop -c rainix-ob-cli-artifact
 RUN tar -xzf crates/cli/bin/rain-orderbook-cli.tar.gz -C /app
-RUN mv /app/rain-orderbook-cli /app/rain_orderbook_cli
-RUN chmod +x /app/rain_orderbook_cli
+RUN chmod +x /app/rain-orderbook-cli
 
 WORKDIR /app
 
-ENTRYPOINT ["nix", "develop", "-c", "local-db-pipeline"]
+ENTRYPOINT ["nix", "develop", "-c", "nix", "run", ".#local-db-pipeline"]
