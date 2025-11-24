@@ -36,4 +36,4 @@ RUN chmod +x /app/rain-orderbook-cli
 
 WORKDIR /app
 
-ENTRYPOINT ["nix", "develop", "-c", "nix", "run", ".#local-db-pipeline"]
+ENTRYPOINT ["nix", "run", ".#local-db-pipeline"]
