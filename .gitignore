@@ -3,3 +3,4 @@
 /local-db
 rain*orderbook*cli
 pipeline.log
+/target
