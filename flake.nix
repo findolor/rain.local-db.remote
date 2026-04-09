@@ -1,20 +1,61 @@
 {
-  description = "Flake for development workflows.";
+  description = "Flake for local DB remote workflows.";
 
   inputs = {
     rainix.url = "github:rainlanguage/rainix";
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.follows = "rainix/nixpkgs";
+
+    ragenix.url = "github:yaxitech/ragenix";
+    deploy-rs.url = "github:serokell/deploy-rs";
+
+    disko.url = "github:nix-community/disko";
+    disko.inputs.nixpkgs.follows = "rainix/nixpkgs";
+
+    nixos-anywhere.url = "github:nix-community/nixos-anywhere";
+    nixos-anywhere.inputs.nixpkgs.follows = "rainix/nixpkgs";
   };
 
-  outputs = { self, flake-utils, rainix, nixpkgs }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs = {
+    self,
+    flake-utils,
+    rainix,
+    nixpkgs,
+    ragenix,
+    deploy-rs,
+    disko,
+    nixos-anywhere,
+    ...
+  }:
+    let
+      deploySystem = "x86_64-linux";
+    in {
+      nixosConfigurations.local-db-remote =
+        rainix.inputs.nixpkgs.lib.nixosSystem {
+          system = deploySystem;
+          specialArgs = { inherit self; };
+          modules = [
+            disko.nixosModules.disko
+            ./os.nix
+          ];
+        };
+
+      deploy = (import ./deploy.nix { inherit deploy-rs self; }).config;
+      checks.${deploySystem} = deploy-rs.lib.${deploySystem}.deployChecks self.deploy;
+    } // flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfreePredicate = pkg:
+            builtins.elem (pkgs.lib.getName pkg) [ "terraform" ];
+        };
+
         baseDevShells = rainix.devShells.${system};
-        addAwsCli = shell:
+        rainixPkgs = rainix.packages.${system};
+
+        addBuildInputs = shell: extraInputs:
           shell.overrideAttrs (old: {
-            buildInputs = (old.buildInputs or []) ++ [ pkgs.awscli2 ];
+            buildInputs = (old.buildInputs or [ ]) ++ extraInputs;
           });
 
         repoRootSetup = ''
@@ -72,7 +113,6 @@
             coreutils
             gmp
             gnused
-            gnutar
             openssl
             pkg-config
             rustc
@@ -98,17 +138,15 @@
                 ;;
             esac
 
-            output_dir="$repo_root"
-            binary_name="rain-orderbook-cli"
             binary_source="$raindex_root/target/$target_triple/release/rain_orderbook_cli"
+            binary_output="$repo_root/rain-orderbook-cli"
 
             echo "Building local raindex CLI artifact..."
             cargo build --release --manifest-path "$raindex_manifest" -p rain_orderbook_cli --target "$target_triple"
 
-            mkdir -p "$output_dir"
-            cp "$binary_source" "$output_dir/$binary_name"
-            chmod 755 "$output_dir/$binary_name"
-            strip "$output_dir/$binary_name" || true
+            cp "$binary_source" "$binary_output"
+            chmod 755 "$binary_output"
+            strip "$binary_output" || true
 
             echo "Setup complete!"
           '';
@@ -132,8 +170,6 @@
             require_var HYPER_RPC_API_TOKEN
             require_var DUMP_BASE_URL
 
-            dump_base_url="$DUMP_BASE_URL"
-
             cli_bin="$repo_root/rain-orderbook-cli"
             if [ ! -x "$cli_bin" ]; then
               echo "❌ Local CLI artifact missing at $cli_bin"
@@ -150,7 +186,7 @@
             "$cli_bin" local-db sync \
               --settings-yaml "$settings_yaml" \
               --api-token "$HYPER_RPC_API_TOKEN" \
-              --release-base-url "$dump_base_url" \
+              --release-base-url "$DUMP_BASE_URL" \
               --out-root "$out_root" \
               --debug-status
           '';
@@ -294,14 +330,124 @@
           '';
         };
 
+        localDbRemoteRunner = pkgs.writeShellApplication {
+          name = "local-db-remote-run";
+          runtimeInputs = with pkgs; [
+            awscli2
+            coreutils
+            curl
+            findutils
+          ];
+          text = builtins.readFile ./nixos/local-db-remote-run.sh;
+        };
+
+        infraPkgs = import ./infra {
+          inherit pkgs ragenix rainix system;
+        };
+
+        deployPkgs = (import ./deploy.nix { inherit deploy-rs self; }).wrappers {
+          inherit pkgs infraPkgs;
+          localSystem = system;
+        };
+
+        bootstrapNixos = rainix.mkTask.${system} {
+          name = "bootstrap-nixos";
+          additionalBuildInputs =
+            infraPkgs.buildInputs ++ [ nixos-anywhere.packages.${system}.default ];
+          body = ''
+            ${infraPkgs.resolveIp}
+            ssh_opts="-o StrictHostKeyChecking=no -o ConnectTimeout=5 -i $identity"
+
+            nixos-anywhere --flake ".#local-db-remote" \
+              --option pure-eval false \
+              --ssh-option "IdentityFile=$identity" \
+              --target-host "root@$host_ip" "$@"
+
+            echo "Waiting for host to come back up..."
+            retries=0
+            until ssh $ssh_opts "root@$host_ip" true 2>/dev/null; do
+              retries=$((retries + 1))
+              if [ "$retries" -ge 60 ]; then
+                echo "Host did not come back up after 5 minutes" >&2
+                exit 1
+              fi
+              sleep 5
+            done
+
+            echo "Bootstrap complete."
+          '';
+        };
+
+        tfRekey = rainix.mkTask.${system} {
+          name = "tf-rekey";
+          additionalBuildInputs = infraPkgs.buildInputs;
+          body = infraPkgs.tfRekey;
+        };
+
+        resolveIpCommand = pkgs.writeShellApplication {
+          name = "resolve-ip";
+          runtimeInputs = infraPkgs.buildInputs;
+          text = ''
+            ${infraPkgs.resolveIp}
+            printf '%s\n' "$host_ip"
+          '';
+        };
+
+        remoteCommand = pkgs.writeShellApplication {
+          name = "remote";
+          runtimeInputs = infraPkgs.buildInputs ++ [ pkgs.openssh ];
+          text = ''
+            ${infraPkgs.resolveIp}
+            exec ssh -i "$identity" "root@$host_ip" "$@"
+          '';
+        };
       in {
-        packages = {
+        packages = rainixPkgs // {
+          bootstrap-nixos = bootstrapNixos;
           build-raindex-cli = buildRaindexCliCommand;
+          deploy-all = deployPkgs.deployAll;
+          deploy-nixos = deployPkgs.deployNixos;
           local-db-create-empty-manifest = localDbCreateEmptyManifestCommand;
+          local-db-remote-runner = localDbRemoteRunner;
           local-db-sync = localDbSyncCommand;
           local-db-upload = localDbUploadCommand;
-        } // rainix.packages.${system};
+          remote = remoteCommand;
+          resolve-ip = resolveIpCommand;
+          tf-apply = infraPkgs.tfApply;
+          tf-destroy = infraPkgs.tfDestroy;
+          tf-edit-vars = infraPkgs.tfEditVars;
+          tf-init = infraPkgs.tfInit;
+          tf-plan = infraPkgs.tfPlan;
+          tf-rekey = tfRekey;
+        };
 
-        devShells = builtins.mapAttrs (_: addAwsCli) baseDevShells;
+        formatter = pkgs.nixfmt-classic;
+
+        devShells.default = addBuildInputs baseDevShells.default (with pkgs; [
+          awscli2
+          deploy-rs.packages.${system}.deploy-rs
+          jq
+          nixos-anywhere.packages.${system}.default
+          ragenix.packages.${system}.default
+          terraform
+          bootstrapNixos
+          deployPkgs.deployAll
+          deployPkgs.deployNixos
+          remoteCommand
+          resolveIpCommand
+          infraPkgs.tfApply
+          infraPkgs.tfDestroy
+          infraPkgs.tfEditVars
+          infraPkgs.tfInit
+          infraPkgs.tfPlan
+          tfRekey
+        ]);
       });
+
+  nixConfig = {
+    extra-substituters = [ "https://nix-community.cachix.org" ];
+    extra-trusted-public-keys = [
+      "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+    ];
+  };
 }
