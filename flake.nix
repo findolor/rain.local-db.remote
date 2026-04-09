@@ -271,9 +271,7 @@
               --acl public-read \
               --content-type "text/yaml" >&2
 
-            endpoint_host="${SPACES_ENDPOINT#https://}"
-            endpoint_host="${endpoint_host#http://}"
-            endpoint_host="${endpoint_host%%/*}"
+            endpoint_host="$(printf '%s' "$SPACES_ENDPOINT" | sed -E 's#^https?://##; s#/.*$##')"
 
             if [ -z "$endpoint_host" ]; then
               echo "❌ Failed to derive endpoint host from SPACES_ENDPOINT=$SPACES_ENDPOINT" >&2
