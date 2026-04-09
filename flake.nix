@@ -130,12 +130,9 @@
 
             require_var SETTINGS_YAML_URL
             require_var HYPER_RPC_API_TOKEN
+            require_var DUMP_BASE_URL
 
-            dump_base_url="''${DUMP_BASE_URL:-''${RELEASE_BASE_URL:-}}"
-            if [ -z "$dump_base_url" ]; then
-              echo "❌ Missing required environment variable: DUMP_BASE_URL"
-              exit 1
-            fi
+            dump_base_url="$DUMP_BASE_URL"
 
             cli_bin="$repo_root/rain-orderbook-cli"
             if [ ! -x "$cli_bin" ]; then
