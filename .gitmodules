@@ -1,0 +1,3 @@
+[submodule "lib/raindex"]
+	path = lib/raindex
+	url = https://github.com/rainlanguage/raindex
