@@ -37,6 +37,19 @@ Upload an existing `local-db` directory without re-running sync:
 nix run .#local-db-upload
 ```
 
+Create and upload an empty remote manifest:
+
+```bash
+nix run .#local-db-create-empty-manifest
+```
+
+Create and upload an empty remote manifest through GitHub Actions:
+
+- Run `.github/workflows/create-empty-local-db-manifest.yaml`
+- The workflow uploads `local-db-manifests/<epoch-ms>/manifest.yaml`
+- It calls `nix run .#local-db-create-empty-manifest`
+- It returns the public manifest URL in the workflow summary
+
 The source still lives in the local submodule, and you can run it directly from there with:
 
 ```bash

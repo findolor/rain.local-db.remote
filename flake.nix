@@ -215,9 +215,89 @@
           '';
         };
 
+        localDbCreateEmptyManifestCommand = pkgs.writeShellApplication {
+          name = "local-db-create-empty-manifest";
+          runtimeInputs = with pkgs; [
+            awscli2
+            coreutils
+            gnused
+          ];
+          text = ''
+            set -euo pipefail
+            ${raindexSetup}
+            ${envSetup}
+            ${shellHelpers}
+
+            load_env_file
+
+            require_var SPACES_ACCESS_KEY
+            require_var SPACES_SECRET_KEY
+            require_var SPACES_REGION
+            require_var SPACES_BUCKET
+            require_var SPACES_ENDPOINT
+
+            export AWS_ACCESS_KEY_ID="$SPACES_ACCESS_KEY"
+            export AWS_SECRET_ACCESS_KEY="$SPACES_SECRET_KEY"
+            export AWS_DEFAULT_REGION="$SPACES_REGION"
+
+            manifest_schema_file="$raindex_root/crates/settings/src/local_db_manifest.rs"
+            if [ ! -f "$manifest_schema_file" ]; then
+              echo "❌ Manifest schema file not found at $manifest_schema_file" >&2
+              exit 1
+            fi
+
+            manifest_version="$(sed -nE 's/^pub const MANIFEST_VERSION: u32 = ([0-9]+);$/\1/p' "$manifest_schema_file")"
+            db_schema_version="$(sed -nE 's/^pub const DB_SCHEMA_VERSION: u32 = ([0-9]+);$/\1/p' "$manifest_schema_file")"
+
+            if [ -z "$manifest_version" ] || [ -z "$db_schema_version" ]; then
+              echo "❌ Failed to read manifest schema versions from $manifest_schema_file" >&2
+              exit 1
+            fi
+
+            epoch_ms="$(date +%s%3N)"
+            object_key="local-db-manifests/$epoch_ms/manifest.yaml"
+            manifest_path="$(mktemp)"
+            trap 'rm -f "$manifest_path"' EXIT
+
+            printf 'manifest-version: %s\ndb-schema-version: %s\nnetworks: {}\n' \
+              "$manifest_version" \
+              "$db_schema_version" >"$manifest_path"
+
+            echo "🚀 Uploading empty local DB manifest to Spaces..." >&2
+            echo "   Object key: $object_key" >&2
+
+            aws s3 cp "$manifest_path" "s3://$SPACES_BUCKET/$object_key" \
+              --endpoint-url "$SPACES_ENDPOINT" \
+              --acl public-read \
+              --content-type "text/yaml" >&2
+
+            endpoint_host="$(printf '%s' "$SPACES_ENDPOINT" | sed -E 's#^https?://##; s#/.*$##')"
+
+            if [ -z "$endpoint_host" ]; then
+              echo "❌ Failed to derive endpoint host from SPACES_ENDPOINT=$SPACES_ENDPOINT" >&2
+              exit 1
+            fi
+
+            case "$endpoint_host" in
+              "$SPACES_BUCKET".*)
+                manifest_url="https://$endpoint_host/$object_key"
+                ;;
+              *)
+                manifest_url="https://$SPACES_BUCKET.$endpoint_host/$object_key"
+                ;;
+            esac
+
+            echo "✅ Empty manifest uploaded." >&2
+            echo "   Manifest URL: $manifest_url" >&2
+
+            printf '%s\n' "$manifest_url"
+          '';
+        };
+
       in {
         packages = {
           build-raindex-cli = buildRaindexCliCommand;
+          local-db-create-empty-manifest = localDbCreateEmptyManifestCommand;
           local-db-sync = localDbSyncCommand;
           local-db-upload = localDbUploadCommand;
         } // rainix.packages.${system};
