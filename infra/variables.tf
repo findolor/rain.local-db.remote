@@ -21,3 +21,12 @@ variable "droplet_size" {
   type = string
   default = "s-1vcpu-1gb"
 }
+
+variable "ssh_allowed_cidrs" {
+  description = "CIDR blocks allowed to reach SSH via the DigitalOcean firewall"
+  type = list(string)
+  default = [
+    "0.0.0.0/0",
+    "::/0",
+  ]
+}

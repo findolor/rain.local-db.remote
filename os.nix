@@ -31,8 +31,23 @@ in {
     openssh = {
       enable = true;
       settings = {
+        KbdInteractiveAuthentication = false;
+        LoginGraceTime = "30s";
+        MaxAuthTries = 3;
+        MaxStartups = "50:30:100";
         PasswordAuthentication = false;
         PermitRootLogin = "prohibit-password";
+      };
+    };
+
+    fail2ban = {
+      enable = true;
+      bantime = "1h";
+      maxretry = 3;
+      jails.sshd.settings = {
+        enabled = true;
+        findtime = "10m";
+        mode = "aggressive";
       };
     };
   };

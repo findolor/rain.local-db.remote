@@ -3,3 +3,7 @@
 #
 # `do_token` is intentionally omitted from this example so CI can supply it
 # through `TF_VAR_do_token` without being overridden by a checked-in file.
+#
+# Narrow this to trusted admin IPs once you have them. Leaving the default keeps
+# SSH reachable from anywhere while the rest of the droplet stays closed.
+# ssh_allowed_cidrs = ["203.0.113.10/32"]
