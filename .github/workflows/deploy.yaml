@@ -3,6 +3,16 @@ name: Deploy
 on:
   workflow_dispatch:
     inputs:
+      target_ref:
+        description: Git ref to deploy from
+        required: true
+        default: main
+        type: string
+      allow_non_main:
+        description: Allow deployment from a non-main ref
+        required: true
+        default: false
+        type: boolean
       settings_url:
         description: Settings YAML URL to deploy
         required: true
@@ -24,16 +34,27 @@ env:
   SPACES_REGION: ${{ secrets.SPACES_REGION }}
   SPACES_BUCKET: ${{ secrets.SPACES_BUCKET }}
   SPACES_ENDPOINT: ${{ secrets.SPACES_ENDPOINT }}
+  TARGET_REF: ${{ inputs.target_ref }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate target ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$TARGET_REF" != "main" ] && [ "${{ inputs.allow_non_main }}" != "true" ]; then
+            echo "Set allow_non_main=true to deploy from a non-main ref." >&2
+            exit 1
+          fi
+
       - name: Free disk space
         uses: jlumbroso/free-disk-space@v1.3.1
 
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.TARGET_REF }}
           submodules: recursive
           fetch-depth: 0
 
@@ -124,6 +145,7 @@ jobs:
           {
             echo "## Local DB Remote Deployment"
             echo
+            echo "- Target ref: $TARGET_REF"
             echo "- Host IP: $HOST_IP"
             echo "- Settings URL: ${{ inputs.settings_url }}"
             echo "- Timer: local-db-sync.timer"
