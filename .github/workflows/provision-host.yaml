@@ -1,0 +1,106 @@
+name: Provision Host
+
+on:
+  workflow_dispatch:
+    inputs:
+      bootstrap_nixos:
+        description: Bootstrap NixOS onto the provisioned droplet
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: provision-host
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    env:
+      TF_VAR_do_token: ${{ secrets.DO_TOKEN }}
+    steps:
+      - name: Require main branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "This workflow must be run from the main branch." >&2
+            exit 1
+          fi
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+            sandbox = false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Setup SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Ensure infrastructure exists
+        run: |
+          nix run .#tf-init
+          nix run .#tf-plan
+          nix run .#tf-apply
+
+      - name: Persist encrypted Terraform state
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --short -- infra/terraform.tfstate.age infra/terraform.tfvars.age)" ]; then
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add infra/terraform.tfstate.age infra/terraform.tfvars.age
+          git commit -m "chore: update local-db remote terraform state"
+          git push origin HEAD:main
+
+      - name: Resolve host IP
+        id: resolve_ip
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_ip="$(nix run .#resolve-ip)"
+          echo "::add-mask::$host_ip"
+          echo "host_ip=$host_ip" >> "$GITHUB_OUTPUT"
+
+      - name: Bootstrap NixOS
+        if: ${{ inputs.bootstrap_nixos }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix run .#bootstrap-nixos
+
+      - name: Summarize provisioning
+        shell: bash
+        run: |
+          {
+            echo "## Host Provisioning"
+            echo
+            echo "- Host IP: ${{ steps.resolve_ip.outputs.host_ip }}"
+            echo "- Bootstrap NixOS: ${{ inputs.bootstrap_nixos }}"
+            echo "- Terraform apply ran successfully"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,56 @@
+{ deploy-rs, self }:
+
+let
+  system = "x86_64-linux";
+  inherit (deploy-rs.lib.${system}) activate;
+in {
+  config = {
+    nodes.local-db-remote = {
+      hostname = builtins.getEnv "DEPLOY_HOST";
+      sshUser = "root";
+      user = "root";
+
+      profiles.system = {
+        path = activate.nixos self.nixosConfigurations.local-db-remote;
+      };
+    };
+  };
+
+  wrappers = { pkgs, infraPkgs, localSystem }:
+    let
+      deployInputs =
+        infraPkgs.buildInputs ++ [ deploy-rs.packages.${localSystem}.deploy-rs ];
+
+      deployPreamble = ''
+        ${infraPkgs.resolveIp}
+        export DEPLOY_HOST="$host_ip"
+        export NIX_SSHOPTS="-i $identity"
+        ssh_flag="--ssh-opts=-i $identity"
+      '';
+
+      deployFlags = if localSystem == system then
+        ""
+      else
+        "--skip-checks --remote-build";
+    in {
+      deployNixos = pkgs.writeShellApplication {
+        name = "deploy-nixos";
+        runtimeInputs = deployInputs;
+        text = ''
+          ${deployPreamble}
+          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} .#local-db-remote.system \
+            -- --impure "$@"
+        '';
+      };
+
+      deployAll = pkgs.writeShellApplication {
+        name = "deploy-all";
+        runtimeInputs = deployInputs;
+        text = ''
+          ${deployPreamble}
+          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} .#local-db-remote \
+            -- --impure "$@"
+        '';
+      };
+    };
+}

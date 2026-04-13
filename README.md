@@ -1,11 +1,15 @@
 # rain.local-db.remote
 
-This repository now owns the local DB pipeline through Nix and a local `raindex` submodule instead of downloading a prebuilt CLI artifact.
+This repository now owns the local DB pipeline through Nix and a local `raindex` submodule instead of downloading a prebuilt CLI artifact. It also contains the Terraform, NixOS, and GitHub workflow pieces needed to deploy the remote sync host.
 
 ## Layout
 
 - `lib/raindex`: git submodule containing the upstream Rust CLI and pipeline source
 - `flake.nix`: flake entrypoints for building the local CLI, syncing, and uploading
+- `infra/`: Terraform configuration and helper tasks for the deployment host
+- `os.nix`: NixOS definition for the deployed sync machine
+- `.github/workflows/deploy.yaml`: manual deployment workflow
+- `.github/workflows/provision-host.yaml`: manual provisioning workflow
 
 ## Setup
 
@@ -55,3 +59,41 @@ The source still lives in the local submodule, and you can run it directly from 
 ```bash
 nix develop -c cargo run --locked --manifest-path lib/raindex/Cargo.toml -p rain_orderbook_cli -- --help
 ```
+
+## Deployment
+
+Provision infrastructure:
+
+```bash
+nix run .#tf-edit-vars
+nix run .#tf-init
+nix run .#tf-plan
+nix run .#tf-apply
+```
+
+Bootstrap the fresh host to NixOS:
+
+```bash
+nix run .#bootstrap-nixos
+```
+
+Or do the same from GitHub Actions:
+
+- Run `.github/workflows/provision-host.yaml`
+- Run it from `main`
+- Set `bootstrap_nixos=true` only when you want to install or reinstall NixOS on the droplet
+- Re-running the workflow without `bootstrap_nixos` is safe for normal Terraform reconciliation
+- Re-running with `bootstrap_nixos=true` is not a no-op; it will re-bootstrap the machine
+
+Resolve the currently provisioned host:
+
+```bash
+nix run .#resolve-ip
+```
+
+Deploy the latest code and runtime config through GitHub Actions:
+
+- Run `.github/workflows/deploy.yaml`
+- Provide the `settings_url` input
+- The workflow runs `./prep.sh`, builds `./rain-orderbook-cli`, deploys the host config, uploads the binary and runtime env file, and starts `local-db-sync.service`
+- The deployed machine runs `local-db-sync.timer` every five minutes with no overlapping runs

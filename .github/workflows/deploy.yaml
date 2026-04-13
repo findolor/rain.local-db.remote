@@ -1,0 +1,131 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      settings_url:
+        description: Settings YAML URL to deploy
+        required: true
+        type: string
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  HYPER_RPC_API_TOKEN: ${{ secrets.HYPER_RPC_API_TOKEN }}
+  DUMP_BASE_URL: ${{ secrets.DUMP_BASE_URL }}
+  SPACES_ACCESS_KEY: ${{ secrets.SPACES_ACCESS_KEY }}
+  SPACES_SECRET_KEY: ${{ secrets.SPACES_SECRET_KEY }}
+  SPACES_REGION: ${{ secrets.SPACES_REGION }}
+  SPACES_BUCKET: ${{ secrets.SPACES_BUCKET }}
+  SPACES_ENDPOINT: ${{ secrets.SPACES_ENDPOINT }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+            sandbox = false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Setup SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Prepare raindex submodule
+        run: ./prep.sh
+
+      - name: Build local CLI artifact
+        run: nix run .#build-raindex-cli
+
+      - name: Resolve host IP
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_ip="$(nix run .#resolve-ip)"
+          echo "::add-mask::$host_ip"
+          echo "HOST_IP=$host_ip" >> "$GITHUB_ENV"
+
+      - name: Trust host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh-keyscan -H "$HOST_IP" >> ~/.ssh/known_hosts
+
+      - name: Deploy NixOS configuration
+        run: nix run .#deploy-nixos
+
+      - name: Upload runtime assets and restart service
+        env:
+          SETTINGS_URL_INPUT: ${{ inputs.settings_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > /tmp/local-db-remote.env <<EOF
+          SETTINGS_YAML_URL=$SETTINGS_URL_INPUT
+          HYPER_RPC_API_TOKEN=$HYPER_RPC_API_TOKEN
+          DUMP_BASE_URL=$DUMP_BASE_URL
+          SPACES_ACCESS_KEY=$SPACES_ACCESS_KEY
+          SPACES_SECRET_KEY=$SPACES_SECRET_KEY
+          SPACES_REGION=$SPACES_REGION
+          SPACES_BUCKET=$SPACES_BUCKET
+          SPACES_ENDPOINT=$SPACES_ENDPOINT
+          EOF
+
+          ssh -i ~/.ssh/id_ed25519 "root@$HOST_IP" '
+            set -euo pipefail
+            mkdir -p /etc/local-db-remote /var/lib/local-db-remote/bin
+            systemctl stop local-db-sync.timer || true
+            systemctl stop local-db-sync.service || true
+            if systemctl is-active --quiet local-db-sync.service; then
+              systemctl kill local-db-sync.service || true
+            fi
+          '
+
+          scp -i ~/.ssh/id_ed25519 ./rain-orderbook-cli "root@$HOST_IP:/var/lib/local-db-remote/bin/rain-orderbook-cli.tmp"
+          scp -i ~/.ssh/id_ed25519 /tmp/local-db-remote.env "root@$HOST_IP:/etc/local-db-remote/env.tmp"
+
+          ssh -i ~/.ssh/id_ed25519 "root@$HOST_IP" '
+            set -euo pipefail
+            install -m 0755 /var/lib/local-db-remote/bin/rain-orderbook-cli.tmp /var/lib/local-db-remote/bin/rain-orderbook-cli
+            install -m 0600 /etc/local-db-remote/env.tmp /etc/local-db-remote/env
+            rm -f /var/lib/local-db-remote/bin/rain-orderbook-cli.tmp /etc/local-db-remote/env.tmp
+            systemctl daemon-reload
+            systemctl restart local-db-sync.timer
+            systemctl start local-db-sync.service
+          '
+
+      - name: Summarize deployment
+        shell: bash
+        run: |
+          {
+            echo "## Local DB Remote Deployment"
+            echo
+            echo "- Host IP: $HOST_IP"
+            echo "- Settings URL: ${{ inputs.settings_url }}"
+            echo "- Timer: local-db-sync.timer"
+            echo "- Service: local-db-sync.service"
+          } >> "$GITHUB_STEP_SUMMARY"
