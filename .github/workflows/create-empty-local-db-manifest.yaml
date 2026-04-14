@@ -3,9 +3,6 @@ name: Create Empty Local DB Manifest
 env:
   SPACES_ACCESS_KEY: ${{ secrets.SPACES_ACCESS_KEY }}
   SPACES_SECRET_KEY: ${{ secrets.SPACES_SECRET_KEY }}
-  SPACES_REGION: ${{ secrets.SPACES_REGION }}
-  SPACES_BUCKET: ${{ secrets.SPACES_BUCKET }}
-  SPACES_ENDPOINT: ${{ secrets.SPACES_ENDPOINT }}
 
 on:
   workflow_dispatch:
@@ -30,12 +27,31 @@ jobs:
             keep-env-derivations = true
             keep-outputs = true
 
+      - name: Load encrypted runtime config
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          nix shell nixpkgs#rage -c sh -c 'rage -d -i ~/.ssh/id_ed25519 config/runtime.env.age > /tmp/local-db-runtime.env'
+          set -a
+          # shellcheck disable=SC1091
+          source /tmp/local-db-runtime.env
+          set +a
+          {
+            echo "DUMP_BASE_URL=$DUMP_BASE_URL"
+            echo "SPACES_REGION=$SPACES_REGION"
+            echo "SPACES_BUCKET=$SPACES_BUCKET"
+            echo "SPACES_ENDPOINT=$SPACES_ENDPOINT"
+          } >> "$GITHUB_ENV"
+
       - name: Create and upload empty manifest
         id: create_manifest
         shell: bash
         run: |
           set -euo pipefail
-          manifest_url="$(nix run .#local-db-create-empty-manifest)"
+          manifest_url="$(nix run .#local-db-create-empty-manifest | tail -n 1)"
           echo "manifest_url=$manifest_url" >>"$GITHUB_OUTPUT"
 
       - name: Summarize manifest URL

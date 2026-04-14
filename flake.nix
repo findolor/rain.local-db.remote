@@ -126,6 +126,11 @@
             export LIBRARY_PATH="${pkgs.gmp}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
             export PKG_CONFIG_PATH="${pkgs.gmp.dev}/lib/pkgconfig''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
             export RUSTFLAGS="-L native=${pkgs.gmp}/lib ''${RUSTFLAGS:-}"
+            export OPENSSL_DIR="${pkgs.openssl.dev}"
+            export OPENSSL_LIB_DIR="${pkgs.openssl.out}/lib"
+            export OPENSSL_INCLUDE_DIR="${pkgs.openssl.dev}/include"
+            COMMIT_SHA="$(git -C "$raindex_root" rev-parse HEAD)"
+            export COMMIT_SHA
 
             target_triple="$(rustc -vV | sed -n 's/^host: //p')"
 
@@ -138,11 +143,11 @@
                 ;;
             esac
 
-            binary_source="$raindex_root/target/$target_triple/release/rain_orderbook_cli"
+            binary_source="$raindex_root/target/$target_triple/release/raindex_cli"
             binary_output="$repo_root/rain-orderbook-cli"
 
             echo "Building local raindex CLI artifact..."
-            cargo build --release --manifest-path "$raindex_manifest" -p rain_orderbook_cli --target "$target_triple"
+            cargo build --release --manifest-path "$raindex_manifest" -p raindex_cli --target "$target_triple"
 
             cp "$binary_source" "$binary_output"
             chmod 755 "$binary_output"

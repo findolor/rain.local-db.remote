@@ -4,6 +4,11 @@
 # `do_token` is intentionally omitted from this example so CI can supply it
 # through `TF_VAR_do_token` without being overridden by a checked-in file.
 #
+# Optional overrides (current deployment defaults shown):
+# ssh_key_name = "github_do"
+# region = "lon1"
+# droplet_size = "s-2vcpu-4gb"
+#
 # Narrow this to trusted admin IPs once you have them. Leaving the default keeps
 # SSH reachable from anywhere while the rest of the droplet stays closed.
 # ssh_allowed_cidrs = ["203.0.113.10/32"]
