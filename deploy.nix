@@ -22,6 +22,7 @@ in {
         infraPkgs.buildInputs ++ [ deploy-rs.packages.${localSystem}.deploy-rs ];
 
       deployPreamble = ''
+        ${infraPkgs.parseIdentity}
         if [ -n "''${DEPLOY_HOST:-}" ]; then
           host_ip="$DEPLOY_HOST"
         else
