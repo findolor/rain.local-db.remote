@@ -50,6 +50,11 @@ in {
         mode = "aggressive";
       };
     };
+
+    tailscale = {
+      enable = true;
+      openFirewall = true;
+    };
   };
 
   users.users.root.openssh.authorizedKeys.keys = roles.ssh;
@@ -57,6 +62,7 @@ in {
   networking.firewall = {
     enable = true;
     allowedTCPPorts = [ 22 ];
+    trustedInterfaces = [ "tailscale0" ];
   };
 
   nix = {
@@ -120,6 +126,7 @@ in {
     git
     htop
     jq
+    tailscale
     zellij
   ];
 

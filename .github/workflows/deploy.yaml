@@ -31,6 +31,7 @@ env:
   PUBLIC_WALLETCONNECT_PROJECT_ID: "00000000000000000000000000000000"
   SPACES_ACCESS_KEY: ${{ secrets.SPACES_ACCESS_KEY }}
   SPACES_SECRET_KEY: ${{ secrets.SPACES_SECRET_KEY }}
+  TAILSCALE_HOSTNAME: local-db-remote
   TARGET_REF: ${{ inputs.target_ref }}
 
 jobs:
@@ -88,17 +89,24 @@ jobs:
             echo "SPACES_ENDPOINT=$SPACES_ENDPOINT"
           } >> "$GITHUB_ENV"
 
+      - name: Connect runner to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
       - name: Prepare raindex submodule
         run: ./prep.sh
 
       - name: Build local CLI artifact
         run: nix run .#build-raindex-cli
 
-      - name: Resolve host IP
+      - name: Resolve host over Tailscale
         shell: bash
         run: |
           set -euo pipefail
-          host_ip="$(nix run .#resolve-ip)"
+          host_ip="$(tailscale ip -4 "$TAILSCALE_HOSTNAME")"
           echo "::add-mask::$host_ip"
           echo "HOST_IP=$host_ip" >> "$GITHUB_ENV"
 
@@ -109,6 +117,8 @@ jobs:
           ssh-keyscan -H "$HOST_IP" >> ~/.ssh/known_hosts
 
       - name: Deploy NixOS configuration
+        env:
+          DEPLOY_HOST: ${{ env.HOST_IP }}
         run: nix run .#deploy-nixos
 
       - name: Upload runtime assets and restart service
