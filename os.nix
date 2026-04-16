@@ -18,16 +18,6 @@ in {
   networking.useDHCP = lib.mkForce false;
 
   services = {
-    cloud-init = {
-      enable = true;
-      network.enable = true;
-      settings = {
-        datasource_list = [ "ConfigDrive" "Digitalocean" ];
-        datasource.ConfigDrive = { };
-        datasource.Digitalocean = { };
-      };
-    };
-
     openssh = {
       enable = true;
       settings = {
