@@ -37,6 +37,8 @@ export AWS_DEFAULT_REGION="$SPACES_REGION"
 
 # shellcheck disable=SC1090
 source "${LOCAL_DB_PUBLISH_TARGET_HELPERS:?missing LOCAL_DB_PUBLISH_TARGET_HELPERS}"
+manifest_url=""
+manifest_dir_url=""
 
 mkdir -p "$state_root"
 
