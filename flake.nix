@@ -52,6 +52,9 @@
 
         baseDevShells = rainix.devShells.${system};
         rainixPkgs = rainix.packages.${system};
+        localDbPublishTargetHelpers =
+          pkgs.writeText "local-db-publish-target.sh"
+          (builtins.readFile ./scripts/local-db-publish-target.sh);
 
         addBuildInputs = shell: extraInputs:
           shell.overrideAttrs (old: {
@@ -104,6 +107,7 @@
               exit 1
             fi
           }
+
         '';
 
         buildRaindexCliCommand = pkgs.writeShellApplication {
@@ -165,6 +169,9 @@
           ];
           text = ''
             set -euo pipefail
+            export LOCAL_DB_PUBLISH_TARGET_HELPERS="${localDbPublishTargetHelpers}"
+            # shellcheck disable=SC1090
+            source "$LOCAL_DB_PUBLISH_TARGET_HELPERS"
             ${raindexSetup}
             ${envSetup}
             ${shellHelpers}
@@ -173,7 +180,6 @@
 
             require_var SETTINGS_YAML_URL
             require_var HYPER_RPC_API_TOKEN
-            require_var DUMP_BASE_URL
 
             cli_bin="$repo_root/rain-orderbook-cli"
             if [ ! -x "$cli_bin" ]; then
@@ -186,12 +192,13 @@
 
             echo "🌐 Fetching settings YAML from $SETTINGS_YAML_URL"
             settings_yaml="$(curl -fsSL "$SETTINGS_YAML_URL")"
+            resolve_publish_target
 
             echo "🚀 Running local-db sync via $cli_bin"
             "$cli_bin" local-db sync \
               --settings-yaml "$settings_yaml" \
               --api-token "$HYPER_RPC_API_TOKEN" \
-              --release-base-url "$DUMP_BASE_URL" \
+              --release-base-url "$manifest_dir_url" \
               --out-root "$out_root" \
               --debug-status
           '';
@@ -206,12 +213,16 @@
           ];
           text = ''
             set -euo pipefail
+            export LOCAL_DB_PUBLISH_TARGET_HELPERS="${localDbPublishTargetHelpers}"
+            # shellcheck disable=SC1090
+            source "$LOCAL_DB_PUBLISH_TARGET_HELPERS"
             ${repoRootSetup}
             ${envSetup}
             ${shellHelpers}
 
             load_env_file
 
+            require_var SETTINGS_YAML_URL
             require_var SPACES_ACCESS_KEY
             require_var SPACES_SECRET_KEY
             require_var SPACES_REGION
@@ -229,27 +240,42 @@
               exit 1
             fi
 
-            echo "🚀 Uploading dump files and manifest from $local_dir to Spaces bucket: $SPACES_BUCKET"
-            echo "   Using endpoint: $SPACES_ENDPOINT"
-            echo
+            echo "🌐 Fetching settings YAML from $SETTINGS_YAML_URL"
+            settings_yaml="$(curl -fsSL "$SETTINGS_YAML_URL")"
+            resolve_publish_target
+            manifest_object_key="$(object_key_from_url "$manifest_url")"
+            publish_prefix_key="''${manifest_object_key%/*}"
 
-            if [ -f "$local_dir/manifest.yaml" ]; then
-              echo "📄 Uploading manifest.yaml..."
-              aws s3 cp "$local_dir/manifest.yaml" "s3://$SPACES_BUCKET/manifest.yaml" \
-                --endpoint-url "$SPACES_ENDPOINT" \
-                --acl public-read \
-                --content-type "text/yaml"
+            if [ "$publish_prefix_key" = "$manifest_object_key" ]; then
+              publish_prefix_key=""
             fi
 
-            echo "🗂️ Uploading SQL dump files (flattened to bucket root)..."
+            echo "🚀 Uploading dump files and manifest from $local_dir to Spaces bucket: $SPACES_BUCKET"
+            echo "   Manifest URL: $manifest_url"
+            echo
+
+            echo "🗂️ Uploading SQL dump files..."
             find "$local_dir" -type f -iname "*-0x*.sql.gz" | while IFS= read -r file; do
               filename="$(basename "$file")"
+              if [ -n "$publish_prefix_key" ]; then
+                object_key="$publish_prefix_key/$filename"
+              else
+                object_key="$filename"
+              fi
               echo "→ Uploading: $filename"
-              aws s3 cp "$file" "s3://$SPACES_BUCKET/$filename" \
+              aws s3 cp "$file" "s3://$SPACES_BUCKET/$object_key" \
                 --endpoint-url "$SPACES_ENDPOINT" \
                 --acl public-read \
                 --content-type "application/gzip"
             done
+
+            if [ -f "$local_dir/manifest.yaml" ]; then
+              echo "📄 Uploading manifest.yaml to $manifest_url..."
+              aws s3 cp "$local_dir/manifest.yaml" "s3://$SPACES_BUCKET/$manifest_object_key" \
+                --endpoint-url "$SPACES_ENDPOINT" \
+                --acl public-read \
+                --content-type "text/yaml"
+            fi
 
             echo
             echo "✅ Upload complete!"
@@ -343,7 +369,10 @@
             curl
             findutils
           ];
-          text = builtins.readFile ./nixos/local-db-remote-run.sh;
+          text = ''
+            export LOCAL_DB_PUBLISH_TARGET_HELPERS="${localDbPublishTargetHelpers}"
+            ${builtins.readFile ./nixos/local-db-remote-run.sh}
+          '';
         };
 
         infraPkgs = import ./infra {
