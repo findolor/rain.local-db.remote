@@ -368,6 +368,7 @@
             coreutils
             curl
             findutils
+            gawk
           ];
           text = ''
             export LOCAL_DB_PUBLISH_TARGET_HELPERS="${localDbPublishTargetHelpers}"
