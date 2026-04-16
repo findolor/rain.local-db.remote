@@ -68,6 +68,16 @@ in {
     };
   };
 
+  programs.nix-ld = {
+    enable = true;
+    libraries = with pkgs; [
+      openssl
+      sqlite
+      stdenv.cc.cc
+      zlib
+    ];
+  };
+
   systemd.tmpfiles.rules = [
     "d /etc/local-db-remote 0750 root root -"
     "d /var/lib/local-db-remote 0755 root root -"
