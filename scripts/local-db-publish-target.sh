@@ -1,28 +1,42 @@
 extract_manifest_urls() {
-  printf '%s\n' "$settings_yaml" | perl -ne '
-    if (/^local-db-remotes:\s*$/) {
-      $in_remotes = 1;
-      next;
+  printf '%s\n' "$settings_yaml" | awk '
+    /^local-db-remotes:[[:space:]]*$/ {
+      in_remotes = 1
+      next
     }
 
-    if ($in_remotes) {
-      if (/^\S/) {
-        exit;
+    in_remotes {
+      if ($0 ~ /^[^[:space:]]/) {
+        exit
       }
 
-      if (/^\s+[^:#][^:]*:\s*(.+?)\s*$/) {
-        my $value = $1;
-        $value =~ s/\s+#.*$//;
-        $value =~ s/^["\x27]//;
-        $value =~ s/["\x27]$//;
-        print "$value\n" if length $value;
+      if ($0 ~ /^[[:space:]]+[^:#][^:]*:[[:space:]]*/) {
+        value = $0
+        sub(/^[[:space:]]+[^:#][^:]*:[[:space:]]*/, "", value)
+        sub(/[[:space:]]+#.*$/, "", value)
+        sub(/^[[:space:]]+/, "", value)
+        sub(/[[:space:]]+$/, "", value)
+
+        if (value ~ /^".*"$/ || value ~ /^'\''.*'\''$/) {
+          value = substr(value, 2, length(value) - 2)
+        }
+
+        if (length(value) > 0) {
+          print value
+        }
       }
     }
   '
 }
 
 resolve_publish_target() {
-  mapfile -t manifest_urls < <(extract_manifest_urls | sort -u)
+  manifest_urls=()
+
+  while IFS= read -r manifest_url_candidate; do
+    if [ -n "$manifest_url_candidate" ]; then
+      manifest_urls+=("$manifest_url_candidate")
+    fi
+  done < <(extract_manifest_urls | sort -u)
 
   if [ "${#manifest_urls[@]}" -ne 1 ]; then
     echo "Expected exactly one unique local-db remote manifest URL, found ${#manifest_urls[@]}" >&2
