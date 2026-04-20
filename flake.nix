@@ -17,37 +17,21 @@
     nixos-anywhere.inputs.nixpkgs.follows = "rainix/nixpkgs";
   };
 
-  outputs = {
-    self,
-    flake-utils,
-    rainix,
-    nixpkgs,
-    nixpkgs-tailscale,
-    ragenix,
-    deploy-rs,
-    disko,
-    nixos-anywhere,
-    ...
-  }:
-    let
-      deploySystem = "x86_64-linux";
+  outputs = { self, flake-utils, rainix, nixpkgs, nixpkgs-tailscale, ragenix
+    , deploy-rs, disko, nixos-anywhere, ... }:
+    let deploySystem = "x86_64-linux";
     in {
       nixosConfigurations.local-db-remote =
-        let
-          tailscalePkgs = import nixpkgs-tailscale {
-            system = deploySystem;
-          };
+        let tailscalePkgs = import nixpkgs-tailscale { system = deploySystem; };
         in rainix.inputs.nixpkgs.lib.nixosSystem {
           system = deploySystem;
           specialArgs = { inherit self tailscalePkgs; };
-          modules = [
-            disko.nixosModules.disko
-            ./os.nix
-          ];
+          modules = [ disko.nixosModules.disko ./os.nix ];
         };
 
       deploy = (import ./deploy.nix { inherit deploy-rs self; }).config;
-      checks.${deploySystem} = deploy-rs.lib.${deploySystem}.deployChecks self.deploy;
+      checks.${deploySystem} =
+        deploy-rs.lib.${deploySystem}.deployChecks self.deploy;
     } // flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -58,14 +42,10 @@
 
         baseDevShells = rainix.devShells.${system};
         rainixPkgs = rainix.packages.${system};
-        localDbPublishTargetHelpers =
-          pkgs.writeText "local-db-publish-target.sh"
-          (builtins.readFile ./scripts/local-db-publish-target.sh);
 
         addBuildInputs = shell: extraInputs:
-          shell.overrideAttrs (old: {
-            buildInputs = (old.buildInputs or [ ]) ++ extraInputs;
-          });
+          shell.overrideAttrs
+          (old: { buildInputs = (old.buildInputs or [ ]) ++ extraInputs; });
 
         repoRootSetup = ''
           repo_root="''${LOCAL_DB_REPO_ROOT:-$(pwd -P)}"
@@ -112,6 +92,81 @@
               echo "❌ Missing required environment variable: $name"
               exit 1
             fi
+          }
+
+          resolve_manifest_publish_target() {
+            local urls first_url
+
+            urls="$("$cli_bin" local-db manifest-urls --settings-yaml "$settings_yaml")"
+            first_url=""
+
+            while IFS= read -r url; do
+              if [ -n "$url" ]; then
+                first_url="$url"
+                break
+              fi
+            done <<<"$urls"
+
+            if [ -z "$first_url" ]; then
+              echo "❌ Expected at least one local-db remote manifest URL"
+              exit 1
+            fi
+
+            manifest_url="$first_url"
+            manifest_dir_url="''${manifest_url%/*}"
+
+            if [ "$manifest_dir_url" = "$manifest_url" ]; then
+              echo "❌ Manifest URL does not contain a publish directory: $manifest_url"
+              exit 1
+            fi
+          }
+
+          url_host() {
+            local without_scheme="$1"
+            without_scheme="''${without_scheme#http://}"
+            without_scheme="''${without_scheme#https://}"
+            printf '%s\n' "''${without_scheme%%/*}"
+          }
+
+          url_path() {
+            local without_scheme="$1"
+            without_scheme="''${without_scheme#http://}"
+            without_scheme="''${without_scheme#https://}"
+
+            case "$without_scheme" in
+              */*) printf '/%s\n' "''${without_scheme#*/}" ;;
+              *) printf '\n' ;;
+            esac
+          }
+
+          object_key_from_url() {
+            local url="$1"
+            local host path endpoint_host
+
+            host="$(url_host "$url")"
+            path="$(url_path "$url")"
+            endpoint_host="$(url_host "$SPACES_ENDPOINT")"
+
+            case "$host" in
+              "$SPACES_BUCKET.$endpoint_host")
+                printf '%s\n' "''${path#/}"
+                ;;
+              "$endpoint_host")
+                case "$path" in
+                  "/$SPACES_BUCKET/"*)
+                    printf '%s\n' "''${path#/"$SPACES_BUCKET"/}"
+                    ;;
+                  *)
+                    echo "Manifest URL path is not inside bucket $SPACES_BUCKET: $url" >&2
+                    exit 1
+                    ;;
+                esac
+                ;;
+              *)
+                echo "Manifest URL host does not match bucket endpoint: $url" >&2
+                exit 1
+                ;;
+            esac
           }
 
         '';
@@ -169,15 +224,9 @@
 
         localDbSyncCommand = pkgs.writeShellApplication {
           name = "local-db-sync";
-          runtimeInputs = with pkgs; [
-            coreutils
-            curl
-          ];
+          runtimeInputs = with pkgs; [ coreutils curl ];
           text = ''
             set -euo pipefail
-            export LOCAL_DB_PUBLISH_TARGET_HELPERS="${localDbPublishTargetHelpers}"
-            # shellcheck disable=SC1090
-            source "$LOCAL_DB_PUBLISH_TARGET_HELPERS"
             ${raindexSetup}
             ${envSetup}
             ${shellHelpers}
@@ -198,7 +247,7 @@
 
             echo "🌐 Fetching settings YAML from $SETTINGS_YAML_URL"
             settings_yaml="$(curl -fsSL "$SETTINGS_YAML_URL")"
-            resolve_publish_target
+            resolve_manifest_publish_target
 
             echo "🚀 Running local-db sync via $cli_bin"
             "$cli_bin" local-db sync \
@@ -212,16 +261,9 @@
 
         localDbUploadCommand = pkgs.writeShellApplication {
           name = "local-db-upload";
-          runtimeInputs = with pkgs; [
-            awscli2
-            coreutils
-            findutils
-          ];
+          runtimeInputs = with pkgs; [ awscli2 coreutils curl findutils ];
           text = ''
             set -euo pipefail
-            export LOCAL_DB_PUBLISH_TARGET_HELPERS="${localDbPublishTargetHelpers}"
-            # shellcheck disable=SC1090
-            source "$LOCAL_DB_PUBLISH_TARGET_HELPERS"
             ${repoRootSetup}
             ${envSetup}
             ${shellHelpers}
@@ -240,6 +282,13 @@
             export AWS_DEFAULT_REGION="$SPACES_REGION"
 
             local_dir="$repo_root/local-db"
+            cli_bin="$repo_root/rain-orderbook-cli"
+
+            if [ ! -x "$cli_bin" ]; then
+              echo "❌ Local CLI artifact missing at $cli_bin"
+              echo "   Run: nix run .#build-raindex-cli"
+              exit 1
+            fi
 
             if [ ! -d "$local_dir" ]; then
               echo "❌ Local DB directory not found at $local_dir"
@@ -248,7 +297,7 @@
 
             echo "🌐 Fetching settings YAML from $SETTINGS_YAML_URL"
             settings_yaml="$(curl -fsSL "$SETTINGS_YAML_URL")"
-            resolve_publish_target
+            resolve_manifest_publish_target
             manifest_object_key="$(object_key_from_url "$manifest_url")"
             publish_prefix_key="''${manifest_object_key%/*}"
 
@@ -290,11 +339,7 @@
 
         localDbCreateEmptyManifestCommand = pkgs.writeShellApplication {
           name = "local-db-create-empty-manifest";
-          runtimeInputs = with pkgs; [
-            awscli2
-            coreutils
-            gnused
-          ];
+          runtimeInputs = with pkgs; [ awscli2 coreutils gnused ];
           text = ''
             set -euo pipefail
             ${raindexSetup}
@@ -369,32 +414,24 @@
 
         localDbRemoteRunner = pkgs.writeShellApplication {
           name = "local-db-remote-run";
-          runtimeInputs = with pkgs; [
-            awscli2
-            coreutils
-            curl
-            findutils
-            gawk
-          ];
+          runtimeInputs = with pkgs; [ awscli2 coreutils curl findutils ];
           text = ''
-            export LOCAL_DB_PUBLISH_TARGET_HELPERS="${localDbPublishTargetHelpers}"
             ${builtins.readFile ./nixos/local-db-remote-run.sh}
           '';
         };
 
-        infraPkgs = import ./infra {
-          inherit pkgs ragenix rainix system;
-        };
+        infraPkgs = import ./infra { inherit pkgs ragenix rainix system; };
 
-        deployPkgs = (import ./deploy.nix { inherit deploy-rs self; }).wrappers {
-          inherit pkgs infraPkgs;
-          localSystem = system;
-        };
+        deployPkgs =
+          (import ./deploy.nix { inherit deploy-rs self; }).wrappers {
+            inherit pkgs infraPkgs;
+            localSystem = system;
+          };
 
         bootstrapNixos = rainix.mkTask.${system} {
           name = "bootstrap-nixos";
-          additionalBuildInputs =
-            infraPkgs.buildInputs ++ [ nixos-anywhere.packages.${system}.default ];
+          additionalBuildInputs = infraPkgs.buildInputs
+            ++ [ nixos-anywhere.packages.${system}.default ];
           body = ''
             ${infraPkgs.resolveIp}
             ssh_opts="-o StrictHostKeyChecking=no -o ConnectTimeout=5 -i $identity"
