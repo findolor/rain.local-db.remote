@@ -96,6 +96,15 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
+      - name: Debug Tailscale connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          tailscale status --json | jq '{CurrentTailnet, Self}'
+          tailscale status
+          tailscale ip -4 "$TAILSCALE_HOSTNAME"
+          tailscale ping --c 3 "$TAILSCALE_HOSTNAME"
+
       - name: Prepare raindex submodule
         run: ./prep.sh
 
