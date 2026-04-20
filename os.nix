@@ -1,4 +1,4 @@
-{ lib, modulesPath, pkgs, self, ... }:
+{ lib, modulesPath, pkgs, self, tailscalePkgs, ... }:
 
 let
   inherit (import ./keys.nix) roles;
@@ -44,6 +44,7 @@ in {
     tailscale = {
       enable = true;
       openFirewall = true;
+      package = tailscalePkgs.tailscale;
     };
   };
 
@@ -126,7 +127,7 @@ in {
     git
     htop
     jq
-    tailscale
+    tailscalePkgs.tailscale
     zellij
   ];
 

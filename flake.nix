@@ -5,6 +5,7 @@
     rainix.url = "github:rainlanguage/rainix";
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.follows = "rainix/nixpkgs";
+    nixpkgs-tailscale.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
     ragenix.url = "github:yaxitech/ragenix";
     deploy-rs.url = "github:serokell/deploy-rs";
@@ -21,6 +22,7 @@
     flake-utils,
     rainix,
     nixpkgs,
+    nixpkgs-tailscale,
     ragenix,
     deploy-rs,
     disko,
@@ -31,9 +33,13 @@
       deploySystem = "x86_64-linux";
     in {
       nixosConfigurations.local-db-remote =
-        rainix.inputs.nixpkgs.lib.nixosSystem {
+        let
+          tailscalePkgs = import nixpkgs-tailscale {
+            system = deploySystem;
+          };
+        in rainix.inputs.nixpkgs.lib.nixosSystem {
           system = deploySystem;
-          specialArgs = { inherit self; };
+          specialArgs = { inherit self tailscalePkgs; };
           modules = [
             disko.nixosModules.disko
             ./os.nix
