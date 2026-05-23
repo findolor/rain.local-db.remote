@@ -1,0 +1,90 @@
+name: List Deployments
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TAILSCALE_HOSTNAME: local-db-remote
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Connect runner to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Resolve host over Tailscale
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_ip="$(tailscale ip -4 "$TAILSCALE_HOSTNAME")"
+          echo "::add-mask::$host_ip"
+          echo "HOST_IP=$host_ip" >> "$GITHUB_ENV"
+
+      - name: Trust host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh-keyscan -H "$HOST_IP" >> ~/.ssh/known_hosts
+
+      - name: List deployments
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh -i ~/.ssh/id_ed25519 "root@$HOST_IP" 'bash -s' <<'REMOTE' | tee /tmp/local-db-deployments.md
+            set -euo pipefail
+            shopt -s nullglob
+
+            echo "## Local DB Remote Deployments"
+            echo
+            echo "| Deployment ID | Timer | Service | Settings URL | Last service start | Next timer run | Work dir size |"
+            echo "| --- | --- | --- | --- | --- | --- | --- |"
+
+            found=0
+            for env_file in /etc/local-db-remote/deployments/*/env; do
+              found=1
+              deployment_id="$(basename "$(dirname "$env_file")")"
+              timer="local-db-sync@$deployment_id.timer"
+              service="local-db-sync@$deployment_id.service"
+              timer_enabled="$(systemctl is-enabled "$timer" 2>/dev/null || true)"
+              timer_active="$(systemctl is-active "$timer" 2>/dev/null || true)"
+              service_active="$(systemctl is-active "$service" 2>/dev/null || true)"
+              settings_url="$(sed -n 's/^SETTINGS_YAML_URL=//p' "$env_file" | head -n1)"
+              last_start="$(systemctl show "$service" --property=ActiveEnterTimestamp --value 2>/dev/null || true)"
+              next_run="$(systemctl show "$timer" --property=NextElapseUSecRealtime --value 2>/dev/null || true)"
+              work_size="$(du -sh "/var/lib/local-db-remote/work/$deployment_id" 2>/dev/null | awk '{print $1}' || true)"
+
+              printf '| `%s` | `%s/%s` | `%s` | %s | %s | %s | `%s` |\n' \
+                "$deployment_id" \
+                "${timer_enabled:-unknown}" \
+                "${timer_active:-unknown}" \
+                "${service_active:-unknown}" \
+                "${settings_url:-unknown}" \
+                "${last_start:-unknown}" \
+                "${next_run:-unknown}" \
+                "${work_size:-0}"
+            done
+
+            if [ "$found" = "0" ]; then
+              echo "| _none_ | - | - | - | - | - | - |"
+            fi
+          REMOTE
+
+          cat /tmp/local-db-deployments.md >> "$GITHUB_STEP_SUMMARY"
