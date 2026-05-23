@@ -8,6 +8,19 @@ require_var() {
   fi
 }
 
+validate_deployment_id() {
+  case "$LOCAL_DB_DEPLOYMENT_ID" in
+    "")
+      echo "LOCAL_DB_DEPLOYMENT_ID must not be empty" >&2
+      exit 1
+      ;;
+    *[!a-zA-Z0-9_.-]*)
+      echo "LOCAL_DB_DEPLOYMENT_ID must contain only letters, numbers, dots, underscores, and dashes" >&2
+      exit 1
+      ;;
+  esac
+}
+
 resolve_manifest_publish_target() {
   local urls first_url
 
@@ -83,8 +96,18 @@ object_key_from_url() {
   esac
 }
 
-cli_bin="/var/lib/local-db-remote/bin/rain-orderbook-cli"
-state_root="/var/lib/local-db-remote/work"
+if [ -n "${LOCAL_DB_DEPLOYMENT_ID:-}" ]; then
+  validate_deployment_id
+  deployment_label="deployment $LOCAL_DB_DEPLOYMENT_ID"
+  deployment_root="/var/lib/local-db-remote/deployments/$LOCAL_DB_DEPLOYMENT_ID"
+  cli_bin="$deployment_root/bin/rain-orderbook-cli"
+  state_root="/var/lib/local-db-remote/work/$LOCAL_DB_DEPLOYMENT_ID"
+else
+  deployment_label="legacy deployment"
+  cli_bin="/var/lib/local-db-remote/bin/rain-orderbook-cli"
+  state_root="/var/lib/local-db-remote/work"
+fi
+
 out_root="$state_root/local-db"
 
 cleanup() {
@@ -125,7 +148,7 @@ if [ "$publish_prefix_key" = "$manifest_object_key" ]; then
   publish_prefix_key=""
 fi
 
-echo "Running local-db sync via $cli_bin"
+echo "Running local-db sync for $deployment_label via $cli_bin"
 "$cli_bin" local-db sync \
   --settings-yaml "$settings_yaml" \
   --api-token "$HYPER_RPC_API_TOKEN" \
@@ -161,4 +184,4 @@ if [ -f "$out_root/manifest.yaml" ]; then
     --content-type "text/yaml"
 fi
 
-echo "Local DB remote sync completed"
+echo "Local DB remote sync completed for $deployment_label"
