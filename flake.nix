@@ -344,15 +344,20 @@
             set -euo pipefail
             ${raindexSetup}
             ${envSetup}
-            ${shellHelpers}
 
             load_env_file
 
-            require_var SPACES_ACCESS_KEY
-            require_var SPACES_SECRET_KEY
-            require_var SPACES_REGION
-            require_var SPACES_BUCKET
-            require_var SPACES_ENDPOINT
+            for required_var in \
+              SPACES_ACCESS_KEY \
+              SPACES_SECRET_KEY \
+              SPACES_REGION \
+              SPACES_BUCKET \
+              SPACES_ENDPOINT; do
+              if [ -z "''${!required_var:-}" ]; then
+                echo "❌ Missing required environment variable: $required_var"
+                exit 1
+              fi
+            done
 
             export AWS_ACCESS_KEY_ID="$SPACES_ACCESS_KEY"
             export AWS_SECRET_ACCESS_KEY="$SPACES_SECRET_KEY"
