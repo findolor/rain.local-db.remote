@@ -81,8 +81,10 @@ in {
 
   systemd.tmpfiles.rules = [
     "d /etc/local-db-remote 0750 root root -"
+    "d /etc/local-db-remote/deployments 0750 root root -"
     "d /var/lib/local-db-remote 0755 root root -"
     "d /var/lib/local-db-remote/bin 0755 root root -"
+    "d /var/lib/local-db-remote/deployments 0755 root root -"
     "d /var/lib/local-db-remote/work 0755 root root -"
   ];
 
@@ -118,6 +120,41 @@ in {
       AccuracySec = "1s";
       Persistent = true;
       Unit = "local-db-sync.service";
+    };
+  };
+
+  systemd.services."local-db-sync@" = {
+    description = "Local DB remote sync for deployment %i";
+    wants = [ "network-online.target" ];
+    after = [ "network-online.target" ];
+    restartIfChanged = false;
+    stopIfChanged = true;
+
+    unitConfig = {
+      ConditionPathExists = [
+        "/etc/local-db-remote/deployments/%i/env"
+        "/var/lib/local-db-remote/deployments/%i/bin/rain-orderbook-cli"
+      ];
+    };
+
+    serviceConfig = {
+      Type = "oneshot";
+      User = "root";
+      WorkingDirectory = "/var/lib/local-db-remote";
+      Environment = "LOCAL_DB_DEPLOYMENT_ID=%i";
+      EnvironmentFile = "/etc/local-db-remote/deployments/%i/env";
+      ExecStart = "${runner}/bin/local-db-remote-run";
+      TimeoutStartSec = "4h";
+      KillMode = "control-group";
+    };
+  };
+
+  systemd.timers."local-db-sync@" = {
+    timerConfig = {
+      OnCalendar = "*:0/5";
+      AccuracySec = "1s";
+      Persistent = true;
+      Unit = "local-db-sync@%i.service";
     };
   };
 
