@@ -1,0 +1,100 @@
+name: Sunset Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_id:
+        description: Deployment ID to sunset
+        required: true
+        type: string
+      delete_state:
+        description: Delete deployment env, binary, and work state
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TAILSCALE_HOSTNAME: local-db-remote
+  DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+  DELETE_STATE: ${{ inputs.delete_state }}
+
+jobs:
+  sunset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$DEPLOYMENT_ID" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "deployment_id must contain only letters, numbers, dots, underscores, and dashes." >&2
+            exit 1
+          fi
+
+      - name: Setup SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Connect runner to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Resolve host over Tailscale
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_ip="$(tailscale ip -4 "$TAILSCALE_HOSTNAME")"
+          echo "::add-mask::$host_ip"
+          echo "HOST_IP=$host_ip" >> "$GITHUB_ENV"
+
+      - name: Trust host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh-keyscan -H "$HOST_IP" >> ~/.ssh/known_hosts
+
+      - name: Stop deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh -i ~/.ssh/id_ed25519 "root@$HOST_IP" "DEPLOYMENT_ID=$DEPLOYMENT_ID DELETE_STATE=$DELETE_STATE bash -s" <<'REMOTE'
+            set -euo pipefail
+            deployment_id="$DEPLOYMENT_ID"
+            delete_state="$DELETE_STATE"
+
+            systemctl disable --now "local-db-sync@$deployment_id.timer" || true
+            systemctl stop "local-db-sync@$deployment_id.service" || true
+            if systemctl is-active --quiet "local-db-sync@$deployment_id.service"; then
+              systemctl kill "local-db-sync@$deployment_id.service" || true
+            fi
+
+            if [ "$delete_state" = "true" ]; then
+              rm -rf \
+                "/etc/local-db-remote/deployments/$deployment_id" \
+                "/var/lib/local-db-remote/deployments/$deployment_id" \
+                "/var/lib/local-db-remote/work/$deployment_id"
+            fi
+          REMOTE
+
+      - name: Summarize sunset
+        shell: bash
+        run: |
+          {
+            echo "## Local DB Remote Deployment Sunset"
+            echo
+            echo "- Deployment ID: $DEPLOYMENT_ID"
+            echo "- Host IP: $HOST_IP"
+            echo "- Deleted state: $DELETE_STATE"
+          } >> "$GITHUB_STEP_SUMMARY"
