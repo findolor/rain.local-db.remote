@@ -28,23 +28,9 @@ jobs:
             keep-outputs = true
 
       - name: Load encrypted runtime config
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          nix shell nixpkgs#rage -c sh -c 'rage -d -i ~/.ssh/id_ed25519 config/runtime.env.age > /tmp/local-db-runtime.env'
-          set -a
-          # shellcheck disable=SC1091
-          source /tmp/local-db-runtime.env
-          set +a
-          {
-            echo "DUMP_BASE_URL=$DUMP_BASE_URL"
-            echo "SPACES_REGION=$SPACES_REGION"
-            echo "SPACES_BUCKET=$SPACES_BUCKET"
-            echo "SPACES_ENDPOINT=$SPACES_ENDPOINT"
-          } >> "$GITHUB_ENV"
+        uses: ./.github/actions/load-runtime-config
+        with:
+          ssh_key: ${{ secrets.SSH_KEY }}
 
       - name: Create and upload empty manifest
         id: create_manifest

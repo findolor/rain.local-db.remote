@@ -5,7 +5,7 @@ variable "do_token" {
 }
 
 variable "ssh_key_name" {
-  description = "Name of the SSH key in DigitalOcean to add to the droplet"
+  description = "Name of the SSH key in DigitalOcean to add to the droplet; must match the key label in the target account"
   type = string
   default = "github_do"
 }

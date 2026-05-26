@@ -52,6 +52,15 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Ensure target ref is a branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git ls-remote --exit-code --heads origin "$TARGET_REF" >/dev/null; then
+            echo "target_ref must be an existing branch name because terraform state is pushed back to it." >&2
+            exit 1
+          fi
+
       - uses: DeterminateSystems/nix-installer-action@main
         with:
           extra-conf: |
