@@ -3,6 +3,16 @@ name: Deploy
 on:
   workflow_dispatch:
     inputs:
+      target_ref:
+        description: Git ref to deploy from
+        required: true
+        default: main
+        type: string
+      allow_non_main:
+        description: Allow deployment from a non-main ref
+        required: true
+        default: false
+        type: boolean
       settings_url:
         description: Settings YAML URL to deploy
         required: true
@@ -18,22 +28,31 @@ permissions:
 
 env:
   HYPER_RPC_API_TOKEN: ${{ secrets.HYPER_RPC_API_TOKEN }}
-  DUMP_BASE_URL: ${{ secrets.DUMP_BASE_URL }}
+  PUBLIC_WALLETCONNECT_PROJECT_ID: "00000000000000000000000000000000"
   SPACES_ACCESS_KEY: ${{ secrets.SPACES_ACCESS_KEY }}
   SPACES_SECRET_KEY: ${{ secrets.SPACES_SECRET_KEY }}
-  SPACES_REGION: ${{ secrets.SPACES_REGION }}
-  SPACES_BUCKET: ${{ secrets.SPACES_BUCKET }}
-  SPACES_ENDPOINT: ${{ secrets.SPACES_ENDPOINT }}
+  TAILSCALE_HOSTNAME: local-db-remote
+  TARGET_REF: ${{ inputs.target_ref }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate target ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$TARGET_REF" != "main" ] && [ "${{ inputs.allow_non_main }}" != "true" ]; then
+            echo "Set allow_non_main=true to deploy from a non-main ref." >&2
+            exit 1
+          fi
+
       - name: Free disk space
         uses: jlumbroso/free-disk-space@v1.3.1
 
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.TARGET_REF }}
           submodules: recursive
           fetch-depth: 0
 
@@ -46,13 +65,17 @@ jobs:
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Setup SSH
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
+      - name: Load encrypted runtime config
+        uses: ./.github/actions/load-runtime-config
+        with:
+          ssh_key: ${{ secrets.SSH_KEY }}
+
+      - name: Connect runner to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
 
       - name: Prepare raindex submodule
         run: ./prep.sh
@@ -60,11 +83,11 @@ jobs:
       - name: Build local CLI artifact
         run: nix run .#build-raindex-cli
 
-      - name: Resolve host IP
+      - name: Resolve host over Tailscale
         shell: bash
         run: |
           set -euo pipefail
-          host_ip="$(nix run .#resolve-ip)"
+          host_ip="$(tailscale ip -4 "$TAILSCALE_HOSTNAME")"
           echo "::add-mask::$host_ip"
           echo "HOST_IP=$host_ip" >> "$GITHUB_ENV"
 
@@ -75,6 +98,8 @@ jobs:
           ssh-keyscan -H "$HOST_IP" >> ~/.ssh/known_hosts
 
       - name: Deploy NixOS configuration
+        env:
+          DEPLOY_HOST: ${{ env.HOST_IP }}
         run: nix run .#deploy-nixos
 
       - name: Upload runtime assets and restart service
@@ -124,6 +149,7 @@ jobs:
           {
             echo "## Local DB Remote Deployment"
             echo
+            echo "- Target ref: $TARGET_REF"
             echo "- Host IP: $HOST_IP"
             echo "- Settings URL: ${{ inputs.settings_url }}"
             echo "- Timer: local-db-sync.timer"

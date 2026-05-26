@@ -1,4 +1,4 @@
-{ lib, modulesPath, pkgs, self, ... }:
+{ lib, modulesPath, pkgs, self, tailscalePkgs, ... }:
 
 let
   inherit (import ./keys.nix) roles;
@@ -18,16 +18,6 @@ in {
   networking.useDHCP = lib.mkForce false;
 
   services = {
-    cloud-init = {
-      enable = true;
-      network.enable = true;
-      settings = {
-        datasource_list = [ "ConfigDrive" "Digitalocean" ];
-        datasource.ConfigDrive = { };
-        datasource.Digitalocean = { };
-      };
-    };
-
     openssh = {
       enable = true;
       settings = {
@@ -50,6 +40,12 @@ in {
         mode = "aggressive";
       };
     };
+
+    tailscale = {
+      enable = true;
+      openFirewall = true;
+      package = tailscalePkgs.tailscale;
+    };
   };
 
   users.users.root.openssh.authorizedKeys.keys = roles.ssh;
@@ -57,6 +53,7 @@ in {
   networking.firewall = {
     enable = true;
     allowedTCPPorts = [ 22 ];
+    trustedInterfaces = [ "tailscale0" ];
   };
 
   nix = {
@@ -70,6 +67,16 @@ in {
       dates = "weekly";
       options = "--delete-older-than 14d";
     };
+  };
+
+  programs.nix-ld = {
+    enable = true;
+    libraries = with pkgs; [
+      openssl
+      sqlite
+      stdenv.cc.cc
+      zlib
+    ];
   };
 
   systemd.tmpfiles.rules = [
@@ -120,6 +127,7 @@ in {
     git
     htop
     jq
+    tailscalePkgs.tailscale
     zellij
   ];
 

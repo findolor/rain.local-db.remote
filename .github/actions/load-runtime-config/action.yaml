@@ -1,0 +1,39 @@
+name: Load encrypted runtime config
+description: Decrypt runtime.env.age and export selected values to GITHUB_ENV.
+
+inputs:
+  ssh_key:
+    description: SSH private key used to decrypt the runtime config.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+
+        mkdir -p ~/.ssh
+        printf '%s\n' "${{ inputs.ssh_key }}" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+
+        runtime_env="$(mktemp "${RUNNER_TEMP:-/tmp}/local-db-runtime.env.XXXXXX")"
+        cleanup() {
+          rm -f "$runtime_env"
+        }
+        trap cleanup EXIT
+
+        chmod 600 "$runtime_env"
+        nix shell nixpkgs#rage -c sh -c "rage -d -i ~/.ssh/id_ed25519 config/runtime.env.age > '$runtime_env'"
+
+        set -a
+        # shellcheck disable=SC1090
+        source "$runtime_env"
+        set +a
+
+        {
+          echo "DUMP_BASE_URL=$DUMP_BASE_URL"
+          echo "SPACES_REGION=$SPACES_REGION"
+          echo "SPACES_BUCKET=$SPACES_BUCKET"
+          echo "SPACES_ENDPOINT=$SPACES_ENDPOINT"
+        } >> "$GITHUB_ENV"
