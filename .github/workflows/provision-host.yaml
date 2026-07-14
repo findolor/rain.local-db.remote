@@ -61,14 +61,12 @@ jobs:
             exit 1
           fi
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: nixbuild/nix-quick-install-action@5bb6a3b3abe66fd09bbf250dce8ada94f856a703 # v30
         with:
-          extra-conf: |
+          nix_conf: |
             accept-flake-config = true
             fallback = true
             sandbox = false
-
-      - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Setup SSH
         shell: bash
